@@ -344,6 +344,8 @@ internal static class PrototypeTests
         TestArchive();
         TestUiAndArtV080();
         TestStartupManager();
+        TestTargetedChatQuiet();
+        TestBallTogglePanelToTray();
         Console.WriteLine("Tests finished: {0} passed, {1} failed", passed, failed);
         return failed == 0 ? 0 : 1;
     }
@@ -822,5 +824,182 @@ internal static class PrototypeTests
             try { Microsoft.Win32.Registry.CurrentUser.DeleteSubKeyTree(baseSubKey, false); } catch { }
             if (Directory.Exists(tmpRoot)) Directory.Delete(tmpRoot, true);
         }
+    }
+
+    static bool ContainsButtonText(System.Windows.DependencyObject root, string needle)
+    {
+        if (root == null) return false;
+        var btn = root as System.Windows.Controls.Button;
+        if (btn != null && ((btn.Content as string) ?? "").Contains(needle)) return true;
+        int count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (int i = 0; i < count; i++)
+        {
+            if (ContainsButtonText(System.Windows.Media.VisualTreeHelper.GetChild(root, i), needle)) return true;
+        }
+        return false;
+    }
+
+    static void TestTargetedChatQuiet()
+    {
+        var now = new DateTime(2026, 11, 24, 14, 0, 0);
+        var state = new NudgeWatch.State();
+        long until60 = NudgeWatch.State.QuietUntilForMinutes(now, 60);
+        long untilDay = NudgeWatch.State.QuietUntilForMinutes(now, 0);
+        Assert(until60 == now.AddMinutes(60).Ticks, "QuietUntilForMinutes(60) adds 60 minutes");
+        Assert(untilDay == now.Date.AddDays(1).Ticks, "QuietUntilForMinutes(0) targets midnight");
+
+        state.SetChatQuiet("核心群", until60);
+        Assert(state.ChatQuietEnd("核心群", now) == until60 && state.IsChatMuted("核心群", now) && !state.IsChatMuted("闲聊群", now),
+            "ChatQuietEnd and IsChatMuted isolate target chat");
+        Assert(state.ActiveQuietChats(now).SequenceEqual(new[] { "核心群" }), "ActiveQuietChats returns active muted chat");
+
+        state.ChatQuietPending.Add("核心群");
+        List<string> withMsg;
+        var expired = state.ExpireChatQuiets(now.AddMinutes(61), out withMsg);
+        Assert(expired.SequenceEqual(new[] { "核心群" }) && withMsg.SequenceEqual(new[] { "核心群" }) &&
+            state.ChatQuietEnd("核心群", now.AddMinutes(61)) == 0 && state.ChatQuietPending.Count == 0,
+            "ExpireChatQuiets cleans expired chat and reports pending messages");
+
+        string root = Path.Combine(Path.GetTempPath(), "nw_chat_quiet_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var store = new NudgeWatch.Store(root);
+            state.SetChatQuiet("临时群", now.AddMinutes(30).Ticks);
+            store.Save(state);
+            var reloaded = store.Load(now);
+            Assert(reloaded.ChatQuietEnd("临时群", now) > 0, "Store persists ChatQuietUntil across reload");
+
+            File.WriteAllText(Path.Combine(root, "state.json"), "{\"Reminders\":[],\"Groups\":{}}");
+            var legacy = store.Load(now);
+            Assert(legacy.ChatQuietUntil != null && legacy.ChatQuietPending != null, "Legacy state.json initializes ChatQuiet fields");
+            File.Delete(Path.Combine(root, "state.json"));
+
+            var app = System.Windows.Application.Current ?? new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
+            DateTime simNow = new DateTime(2026, 11, 24, 14, 0, 0);
+            using (var shell = new NudgeWatch.Shell(root, () => new NudgeWatch.Frame(), () => simNow))
+            {
+                shell.Alerts.Sound = false;
+                shell.Start();
+                var apply = typeof(NudgeWatch.Shell).GetMethod("Apply", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                apply.Invoke(shell, new object[] { new NudgeWatch.Frame { Status = "微信已连接 · 2 个可见会话", Chats = new List<SessionInfo> {
+                    new SessionInfo { Title = "核心群", Unread = 0, Preview = "old" },
+                    new SessionInfo { Title = "闲聊群", Unread = 0, Preview = "old" }
+                } } });
+
+                apply.Invoke(shell, new object[] { new NudgeWatch.Frame { Status = "微信已连接 · 2 个可见会话", Chats = new List<SessionInfo> {
+                    new SessionInfo { Title = "核心群", Unread = 1, Preview = "请查看" },
+                    new SessionInfo { Title = "闲聊群", Unread = 0, Preview = "old" }
+                } } });
+                Assert(shell.Alerts.Current != null && shell.Alerts.Current.Chat == "核心群", "Incoming message triggers alert for 核心群");
+                Assert(((string)shell.Alerts.Window.Part<System.Windows.Controls.Button>("QuietNow").Content).Contains("免打扰"),
+                    "Alert QuietNow button displays dropdown label");
+
+                var popQuiet = typeof(NudgeWatch.Alerts).GetMethod("PopulateQuietActions", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                var testChatQuietMenu = new System.Windows.Controls.ContextMenu();
+                popQuiet.Invoke(shell.Alerts, new object[] { testChatQuietMenu.Items, "核心群" });
+                var chatQuietHeaders = testChatQuietMenu.Items.OfType<System.Windows.Controls.MenuItem>().Select(m => m.Header as string).ToList();
+                Assert(chatQuietHeaders.Any(h => h != null && h.Contains("仅此会话免打扰 1 小时")) &&
+                    chatQuietHeaders.Any(h => h != null && h.Contains("指定其他会话免打扰")) &&
+                    chatQuietHeaders.Any(h => h != null && h.Contains("全部消息免打扰 1 小时")),
+                    "Chat alert QuietNow menu provides current-chat, pick-other-chats, and mute-all actions");
+
+                shell.Alerts.QuietChat("核心群", 60);
+                Assert(shell.Alerts.Current == null && shell.State.ChatQuietEnd("核心群", simNow) > 0,
+                    "QuietChat closes matching popup and activates per-chat quiet");
+
+                apply.Invoke(shell, new object[] { new NudgeWatch.Frame { Status = "微信已连接 · 2 个可见会话", Chats = new List<SessionInfo> {
+                    new SessionInfo { Title = "核心群", Unread = 2, Preview = "静音期间消息" },
+                    new SessionInfo { Title = "闲聊群", Unread = 1, Preview = "正常弹出消息" }
+                } } });
+                Assert(shell.Alerts.Current != null && shell.Alerts.Current.Chat == "闲聊群" && shell.State.ChatQuietPending.Contains("核心群"),
+                    "Target chat is muted while other chat still pops alert");
+                ClickButton(shell.Alerts.Window, "Ack");
+
+                var archiveField = typeof(NudgeWatch.Shell).GetField("archive", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+                var arch = (NudgeWatch.MessageArchive)archiveField.GetValue(shell);
+                arch.Flush();
+                var archivedRows = arch.Read(simNow.Date, simNow.Date);
+                Assert(archivedRows.Any(e => e.chat == "核心群" && e.preview == "静音期间消息" && e.muted) &&
+                    archivedRows.Any(e => e.chat == "闲聊群" && e.preview == "正常弹出消息" && !e.muted),
+                    "Archive marks target quiet chat as muted and other chat as unmuted");
+
+                var chatsTree = shell.Panel.Part<System.Windows.Controls.TreeView>("Chats");
+                var newBranch = chatsTree.Items.Cast<System.Windows.Controls.TreeViewItem>().First(b => NudgeWatch.Rows.NameOf(b).StartsWith("新消息"));
+                var coreLeaf = newBranch.Items.Cast<System.Windows.Controls.TreeViewItem>().First(n => (string)n.Tag == "核心群");
+                Assert(ContainsButtonText(coreLeaf.Header as System.Windows.DependencyObject, "☾"),
+                    "Chat tree leaf renders quiet pill while chat is muted");
+
+                simNow = simNow.AddMinutes(61);
+                shell.Tick();
+                Assert(shell.Alerts.Current != null && shell.Alerts.Current.Title == "免打扰已结束" && shell.Alerts.Current.Body.Contains("核心群") &&
+                    shell.State.ChatQuietEnd("核心群", simNow) == 0,
+                    "Expiring target chat quiet pushes L2 summary");
+                ClickButton(shell.Alerts.Window, "Ack");
+
+                var rem = NudgeWatch.Capture.Parse("0分钟后 周期提醒 @每天", simNow);
+                shell.SaveReminder(rem);
+                var moreBtn = shell.Alerts.Window.Part<System.Windows.Controls.Button>("More");
+                Assert(shell.Alerts.Current != null && shell.Alerts.Current.ReminderId == rem.Id && moreBtn.Visibility == System.Windows.Visibility.Visible,
+                    "Recurring reminder exposes More button for quiet options");
+                var testRemQuietMenu = new System.Windows.Controls.ContextMenu();
+                popQuiet.Invoke(shell.Alerts, new object[] { testRemQuietMenu.Items, null });
+                var remQuietHeaders = testRemQuietMenu.Items.OfType<System.Windows.Controls.MenuItem>().Select(m => m.Header as string).ToList();
+                Assert(remQuietHeaders.Any(h => h != null && h.Contains("指定会话免打扰")) &&
+                    remQuietHeaders.Any(h => h != null && h.Contains("全部消息免打扰 1 小时")),
+                    "Reminder alert quiet menu includes targeted chat picker and mute-all options");
+                ClickButton(shell.Alerts.Window, "Ack");
+
+                shell.Panel.Hide();
+                shell.Ball.Hide();
+            }
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
+    }
+
+    static void TestBallTogglePanelToTray()
+    {
+        string root = Path.Combine(Path.GetTempPath(), "nw_ball_toggle_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var app = System.Windows.Application.Current ?? new System.Windows.Application { ShutdownMode = System.Windows.ShutdownMode.OnExplicitShutdown };
+            using (var shell = new NudgeWatch.Shell(root, () => new NudgeWatch.Frame { Status = "微信已连接 · 0 个可见会话" }, () => DateTime.Now))
+            {
+                shell.Alerts.Sound = false;
+                shell.Start();
+                Assert(shell.IsPanelOpen() && shell.Panel.IsVisible, "Panel starts open");
+                shell.Ball.ContextMenu.IsOpen = true;
+                var openBallHeaders = shell.Ball.ContextMenu.Items.OfType<System.Windows.Controls.MenuItem>().Select(m => m.Header as string).ToList();
+                shell.Ball.ContextMenu.IsOpen = false;
+                Assert(openBallHeaders.Contains("收入托盘（隐藏主面板）") && openBallHeaders.Contains("指定会话免打扰…"),
+                    "Ball context menu shows collapse-to-tray and targeted quiet entry when panel is open");
+
+                shell.Ball.RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0, System.Windows.Input.MouseButton.Left)
+                { RoutedEvent = System.Windows.UIElement.MouseLeftButtonUpEvent });
+                Assert(!shell.Panel.IsVisible && !shell.IsPanelOpen(), "Clicking ball when panel is open hides panel to tray");
+                shell.Ball.ContextMenu.IsOpen = true;
+                var hiddenBallHeaders = shell.Ball.ContextMenu.Items.OfType<System.Windows.Controls.MenuItem>().Select(m => m.Header as string).ToList();
+                shell.Ball.ContextMenu.IsOpen = false;
+                Assert(hiddenBallHeaders.Contains("打开主面板"),
+                    "Ball context menu shows reopen-panel entry when panel is in tray");
+
+                shell.Ball.RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0, System.Windows.Input.MouseButton.Left)
+                { RoutedEvent = System.Windows.UIElement.MouseLeftButtonUpEvent });
+                Assert(shell.Panel.IsVisible && shell.Panel.WindowState == System.Windows.WindowState.Normal && shell.IsPanelOpen(),
+                    "Clicking ball when panel is in tray reopens panel");
+
+                shell.Panel.WindowState = System.Windows.WindowState.Minimized;
+                Assert(!shell.IsPanelOpen(), "Minimized panel is not considered open");
+                shell.Ball.RaiseEvent(new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice, 0, System.Windows.Input.MouseButton.Left)
+                { RoutedEvent = System.Windows.UIElement.MouseLeftButtonUpEvent });
+                Assert(shell.Panel.IsVisible && shell.Panel.WindowState == System.Windows.WindowState.Normal && shell.IsPanelOpen(),
+                    "Clicking ball when panel is minimized restores panel");
+
+                shell.Panel.Hide();
+                shell.Ball.Hide();
+            }
+        }
+        finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }
 }
