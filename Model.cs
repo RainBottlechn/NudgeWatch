@@ -101,6 +101,8 @@ namespace NudgeWatch
         public int DefaultLevel = 2;
         public long TemporaryUntil;
         public List<string> MutedChats = new List<string>();
+        public Dictionary<string, long> ChatQuietUntil = new Dictionary<string, long>();
+        public List<string> ChatQuietPending = new List<string>();
         public bool AutoReturnToTop = true;
         public bool AutoStart;
         public int ArchiveRetentionDays = 30;
@@ -123,6 +125,87 @@ namespace NudgeWatch
             TemporaryUntil = 0;
             foreach (var r in Reminders.Where(r => r.QuietEnd(now) > 0))
                 r.Released = r.Latest(now.AddMinutes(-r.Delay));
+        }
+
+        public static long QuietUntilForMinutes(DateTime now, int minutes)
+        {
+            if (minutes <= 0) return now.Date.AddDays(1).Ticks;
+            return now.AddMinutes(minutes).Ticks;
+        }
+
+        public long ChatQuietEnd(string title, DateTime now)
+        {
+            if (String.IsNullOrWhiteSpace(title) || ChatQuietUntil == null) return 0;
+            long until;
+            if (ChatQuietUntil.TryGetValue(title, out until) && until > now.Ticks) return until;
+            return 0;
+        }
+
+        public bool IsChatMuted(string title, DateTime now)
+        {
+            return QuietEnd(now) > 0 || ChatQuietEnd(title, now) > 0;
+        }
+
+        public void SetChatQuiet(string title, long untilTicks)
+        {
+            if (String.IsNullOrWhiteSpace(title)) return;
+            if (ChatQuietUntil == null) ChatQuietUntil = new Dictionary<string, long>();
+            if (untilTicks <= 0)
+            {
+                ReleaseChatQuiet(title);
+                return;
+            }
+            ChatQuietUntil[title] = untilTicks;
+        }
+
+        public bool ReleaseChatQuiet(string title)
+        {
+            if (String.IsNullOrWhiteSpace(title)) return false;
+            bool removed = false;
+            if (ChatQuietUntil != null && ChatQuietUntil.Remove(title)) removed = true;
+            if (ChatQuietPending != null && ChatQuietPending.RemoveAll(t => t == title) > 0) removed = true;
+            return removed;
+        }
+
+        public bool ReleaseAllChatQuiets()
+        {
+            bool had = (ChatQuietUntil != null && ChatQuietUntil.Count > 0) ||
+                       (ChatQuietPending != null && ChatQuietPending.Count > 0);
+            if (ChatQuietUntil != null) ChatQuietUntil.Clear();
+            if (ChatQuietPending != null) ChatQuietPending.Clear();
+            return had;
+        }
+
+        public List<string> ActiveQuietChats(DateTime now)
+        {
+            if (ChatQuietUntil == null || ChatQuietUntil.Count == 0) return new List<string>();
+            long nowTicks = now.Ticks;
+            return ChatQuietUntil
+                .Where(kv => !String.IsNullOrWhiteSpace(kv.Key) && kv.Value > nowTicks)
+                .OrderBy(kv => kv.Value)
+                .ThenBy(kv => kv.Key, StringComparer.Ordinal)
+                .Select(kv => kv.Key)
+                .ToList();
+        }
+
+        public List<string> ExpireChatQuiets(DateTime now, out List<string> withMessages)
+        {
+            withMessages = new List<string>();
+            if (ChatQuietUntil == null) ChatQuietUntil = new Dictionary<string, long>();
+            if (ChatQuietPending == null) ChatQuietPending = new List<string>();
+            long nowTicks = now.Ticks;
+            var expired = ChatQuietUntil
+                .Where(kv => String.IsNullOrWhiteSpace(kv.Key) || kv.Value <= nowTicks)
+                .Select(kv => kv.Key)
+                .ToList();
+            foreach (var title in expired)
+            {
+                ChatQuietUntil.Remove(title);
+                if (!String.IsNullOrWhiteSpace(title) && ChatQuietPending.RemoveAll(t => t == title) > 0)
+                    withMessages.Add(title);
+            }
+            ChatQuietPending.RemoveAll(t => String.IsNullOrWhiteSpace(t) || !ChatQuietUntil.ContainsKey(t));
+            return expired.Where(t => !String.IsNullOrWhiteSpace(t)).ToList();
         }
 
         public int ChatLevel(WxWatch.ChatEvent e)
@@ -151,6 +234,13 @@ namespace NudgeWatch
             if (state.TaskGroups == null) state.TaskGroups = new List<TaskGroupDef>();
             if (state.CollapsedChatGroups == null) state.CollapsedChatGroups = new List<string>();
             if (state.CollapsedTaskGroups == null) state.CollapsedTaskGroups = new List<string>();
+            if (state.ChatQuietUntil == null) state.ChatQuietUntil = new Dictionary<string, long>();
+            else
+            {
+                foreach (var bad in state.ChatQuietUntil.Where(kv => String.IsNullOrWhiteSpace(kv.Key) || kv.Value <= 0).Select(kv => kv.Key).ToList())
+                    state.ChatQuietUntil.Remove(bad);
+            }
+            if (state.ChatQuietPending == null) state.ChatQuietPending = new List<string>();
             state.Groups.RemoveAll(g => g == null || String.IsNullOrWhiteSpace(g.Name) || g.Name == "新消息" || g.Name == "未分组" || g.Name == "已收录 · 待归组");
             foreach (var r in state.Reminders)
             {

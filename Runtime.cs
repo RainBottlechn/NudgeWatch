@@ -97,14 +97,25 @@ namespace NudgeWatch
         public Action<string> Convert;
         public Func<long> CustomFollowUp;
         public Action QuietNow;
+        public Action<int> QuietAll;
+        public Action<string, int> QuietChat;
+        public Action<string> PickQuietChats;
+        public Func<List<string>> SuggestQuietChats;
         public bool Sound = true;
-        bool enteringFollowUp;
+        bool enteringFollowUp, enteringDialog;
         readonly DispatcherTimer timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4.5) };
 
         public Alerts()
         {
             Window.Click("Ack", Next);
-            Window.Click("QuietNow",delegate { QuietNow(); });
+            var quietMenu = new ContextMenu();
+            Window.Click("QuietNow", delegate {
+                if (Current == null) return;
+                quietMenu.Items.Clear();
+                PopulateQuietActions(quietMenu.Items, Current.Chat);
+                quietMenu.PlacementTarget = Window.Part<Button>("QuietNow");
+                quietMenu.IsOpen = true;
+            });
             Window.Click("Complete",delegate { Schedule(0); });
             Window.Click("Convert",delegate { if (Current != null) Convert(Current.ReminderId); });
             var menu=new ContextMenu();
@@ -153,19 +164,86 @@ namespace NudgeWatch
                 }
                 if (Current.Chat == null)
                 {
-                    var quiet = new MenuItem { Header = "免打扰 1 小时" };
-                    quiet.Click += delegate { QuietNow(); };
-                    more.Items.Add(quiet);
+                    var quietSub = new MenuItem { Header = "免打扰" };
+                    PopulateQuietActions(quietSub.Items, null);
+                    more.Items.Add(quietSub);
                 }
                 if (more.Items.Count == 0) return;
                 more.PlacementTarget = Window.Part<Button>("More"); more.IsOpen = true;
             });
             Window.Closing += (s,e) => { e.Cancel = true; Next(); };
-            timer.Tick += delegate { if (!Window.IsMouseOver && !enteringFollowUp && !more.IsOpen && !(Current != null && Current.Task && menu.IsOpen)) {
+            timer.Tick += delegate { if (!Window.IsMouseOver && !enteringFollowUp && !enteringDialog && !more.IsOpen && !menu.IsOpen && !quietMenu.IsOpen) {
                 timer.Stop(); var current=Current;
                 var fade=new System.Windows.Media.Animation.DoubleAnimation(1,0,TimeSpan.FromMilliseconds(180));
                 fade.Completed+=delegate {if(Current==current)Next();}; Window.BeginAnimation(Window.OpacityProperty,fade);
             } };
+        }
+        void InvokeQuietAll(int minutes)
+        {
+            if (QuietAll != null) QuietAll(minutes);
+            else if (QuietNow != null) QuietNow();
+        }
+        void OpenQuietPicker(string initialChat)
+        {
+            if (PickQuietChats == null) return;
+            enteringDialog = true;
+            try { PickQuietChats(initialChat); }
+            finally { enteringDialog = false; }
+        }
+        void PopulateQuietActions(ItemCollection items, string currentChat)
+        {
+            if (!String.IsNullOrEmpty(currentChat))
+            {
+                foreach (var opt in new[] {
+                    new { Label = "仅此会话免打扰 30 分钟", Minutes = 30 },
+                    new { Label = "仅此会话免打扰 1 小时", Minutes = 60 },
+                    new { Label = "仅此会话免打扰 2 小时", Minutes = 120 },
+                    new { Label = "仅此会话今日内免打扰", Minutes = 0 }
+                })
+                {
+                    int mins = opt.Minutes;
+                    var mi = new MenuItem { Header = opt.Label };
+                    mi.Click += delegate { if (QuietChat != null) QuietChat(currentChat, mins); };
+                    items.Add(mi);
+                }
+                items.Add(new Separator());
+                var pick = new MenuItem { Header = "指定其他会话免打扰…" };
+                pick.Click += delegate { OpenQuietPicker(currentChat); };
+                items.Add(pick);
+                items.Add(new Separator());
+            }
+            else
+            {
+                var pick = new MenuItem { Header = "指定会话免打扰…" };
+                pick.Click += delegate { OpenQuietPicker(null); };
+                items.Add(pick);
+                if (SuggestQuietChats != null)
+                {
+                    var suggestions = SuggestQuietChats();
+                    if (suggestions != null && suggestions.Count > 0)
+                    {
+                        items.Add(new Separator());
+                        foreach (var chat in suggestions.Take(5))
+                        {
+                            string target = chat;
+                            var sItem = new MenuItem { Header = "仅免打扰「" + target + "」1 小时" };
+                            sItem.Click += delegate { if (QuietChat != null) QuietChat(target, 60); };
+                            items.Add(sItem);
+                        }
+                    }
+                }
+                items.Add(new Separator());
+            }
+            foreach (int minutes in new[] { 30, 60, 120 })
+            {
+                int mins = minutes;
+                string label = minutes == 60 ? "全部消息免打扰 1 小时"
+                    : minutes == 120 ? "全部消息免打扰 2 小时"
+                    : "全部消息免打扰 30 分钟";
+                var mi = new MenuItem { Header = label };
+                mi.Click += delegate { InvokeQuietAll(mins); };
+                items.Add(mi);
+            }
         }
         void AddSchedule(ContextMenu menu, string title, long value)
         {
@@ -209,7 +287,7 @@ namespace NudgeWatch
             Window.Part<Button>("Jump").Visibility = item.Chat == null ? Visibility.Collapsed : Visibility.Visible;
             Window.Part<Button>("Complete").Visibility=Window.Part<Button>("Snooze").Visibility=item.ReminderId==null?Visibility.Collapsed:Visibility.Visible;
             Window.Part<Button>("Convert").Visibility = Visibility.Collapsed;
-            Window.Part<Button>("More").Visibility = (item.CanConvert || item.Task) ? Visibility.Visible : Visibility.Collapsed;
+            Window.Part<Button>("More").Visibility = (item.CanConvert || item.Task || item.ReminderId != null) ? Visibility.Visible : Visibility.Collapsed;
             Window.Part<Button>("Complete").Content = item.Task ? "确认已完成" : "完成";
             Window.Part<Button>("Snooze").Content = item.Task ? "延后追催 ▾" : "稍后 ▾";
             Window.Part<Button>("Snooze").ToolTip = item.Task ? "未完成，稍后再追催" : null;

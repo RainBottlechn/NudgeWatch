@@ -180,14 +180,262 @@ namespace NudgeWatch {
         HookTheme();
         ApplyTheme();
         Panel.Click("Options",delegate{options.PlacementTarget=Panel.Part<Button>("Options");options.IsOpen=true;});
-        int staticItems = Ball.ContextMenu.Items.Count;
-        Ball.ContextMenu.Opened+=delegate{
-            var menu=Ball.ContextMenu;
-            while(menu.Items.Count>staticItems)menu.Items.RemoveAt(staticItems);
-            foreach(var g in State.Groups){var sub=new MenuItem{Header=g.Name};menu.Items.Add(sub);
-                foreach(var name in g.Chats){string target=name;var child=new MenuItem{Header=target};child.Click+=delegate{Jump(target);};sub.Items.Add(child);}}
-            foreach(var row in rows.Where(r=>r.IsPinned)){string target=row.Title;MenuItem(menu,"置顶 · "+target,delegate{Jump(target);});}
+        Ball.ContextMenu.Opened += delegate {
+            var menu = Ball.ContextMenu;
+            menu.Items.Clear();
+            PopulateQuietMenuItems(menu.Items);
+            menu.Items.Add(new Separator());
+            MenuItem(menu, IsPanelOpen() ? "收入托盘（隐藏主面板）" : "打开主面板", TogglePanel);
+            MenuItem(menu, "快速建提醒", Forms.OpenQuick);
+            MenuItem(menu, "收起微信（最小化保活）", MinimizeWeChat);
+            MenuItem(menu, "一键将微信列表回顶", ReturnWechatTop);
+            var pinnedRows = rows.Where(r => r.IsPinned).ToList();
+            if (State.Groups.Count > 0 || pinnedRows.Count > 0) menu.Items.Add(new Separator());
+            foreach (var g in State.Groups)
+            {
+                var sub = new MenuItem { Header = g.Name };
+                menu.Items.Add(sub);
+                foreach (var name in g.Chats)
+                {
+                    string target = name;
+                    var child = new MenuItem { Header = target };
+                    child.Click += delegate { Jump(target); };
+                    sub.Items.Add(child);
+                }
+            }
+            foreach (var row in pinnedRows)
+            {
+                string target = row.Title;
+                MenuItem(menu, "置顶 · " + target, delegate { Jump(target); });
+            }
         };
+    }
+    internal void QuietAllChats(int minutes)
+    {
+        State.TemporaryUntil = clock().AddMinutes(minutes).Ticks;
+        Changed();
+    }
+    internal void QuietChats(IEnumerable<string> titles, int minutes)
+    {
+        if (titles == null) return;
+        var list = titles.Where(t => !String.IsNullOrWhiteSpace(t))
+            .Select(t => t.Trim())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        if (list.Count == 0) return;
+        DateTime now = clock();
+        long until = State.QuietUntilForMinutes(now, minutes);
+        foreach (var title in list) State.SetChatQuiet(title, until);
+        var targetSet = new HashSet<string>(list, StringComparer.Ordinal);
+        Alerts.ClearChats(n => n.Chat != null && targetSet.Contains(n.Chat));
+        string untilText = new DateTime(until).ToString("HH:mm");
+        SetChatActionNote(list.Count == 1
+            ? "已免打扰「" + list[0] + "」至 " + untilText
+            : "已免打扰 " + list.Count + " 个指定会话至 " + untilText);
+        TreeChanged();
+        Changed();
+    }
+    internal void ReleaseChatQuiet(string title)
+    {
+        if (!State.ReleaseChatQuiet(title)) return;
+        SetChatActionNote("已解除「" + title + "」免打扰");
+        TreeChanged();
+        Changed();
+    }
+    internal void ReleaseChatsQuiet(IEnumerable<string> titles)
+    {
+        if (titles == null) return;
+        bool removed = false;
+        int count = 0;
+        string last = null;
+        foreach (var title in titles.Where(t => !String.IsNullOrWhiteSpace(t)).Distinct(StringComparer.Ordinal))
+        {
+            if (State.ReleaseChatQuiet(title)) { removed = true; count++; last = title; }
+        }
+        if (!removed) return;
+        SetChatActionNote(count == 1 ? "已解除「" + last + "」免打扰" : "已解除 " + count + " 个会话免打扰");
+        TreeChanged();
+        Changed();
+    }
+    internal void ReleaseAllChatQuiets()
+    {
+        if (!State.ReleaseAllChatQuiets()) return;
+        SetChatActionNote("已解除全部指定会话免打扰");
+        TreeChanged();
+        Changed();
+    }
+    internal List<string> SuggestQuietChats()
+    {
+        DateTime now = clock();
+        var result = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var row in rows.Where(r => r != null && !String.IsNullOrWhiteSpace(r.Title))
+            .OrderByDescending(r => r.Unread > 0))
+        {
+            if (State.ChatQuietEnd(row.Title, now) > 0) continue;
+            if (seen.Add(row.Title)) result.Add(row.Title);
+            if (result.Count >= 5) break;
+        }
+        return result;
+    }
+    void PickQuietChats(string initialChat)
+    {
+        DateTime now = clock();
+        var candidates = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        Action<string> addCandidate = title => {
+            if (String.IsNullOrWhiteSpace(title)) return;
+            string normalized = title.Trim();
+            if (seen.Add(normalized)) candidates.Add(normalized);
+        };
+        if (!String.IsNullOrWhiteSpace(initialChat)) addCandidate(initialChat);
+        foreach (var row in rows.Where(r => r != null && r.Unread > 0)) addCandidate(row.Title);
+        foreach (var row in rows.Where(r => r != null)) addCandidate(row.Title);
+        foreach (var g in State.Groups)
+            foreach (var c in g.Chats) addCandidate(c);
+        foreach (var kc in knownChats.All.OrderByDescending(c => c.LastSeenAt)) addCandidate(kc.Title);
+
+        var chosen = new HashSet<string>(StringComparer.Ordinal);
+        if (!String.IsNullOrWhiteSpace(initialChat)) chosen.Add(initialChat.Trim());
+
+        var dlg = new Window
+        {
+            Owner = Panel.IsVisible ? Panel : null,
+            Title = "指定会话免打扰",
+            Width = 370,
+            SizeToContent = SizeToContent.Height,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+            WindowStartupLocation = Panel.IsVisible ? WindowStartupLocation.CenterOwner : WindowStartupLocation.CenterScreen,
+            Topmost = !Panel.IsVisible && Alerts.Window.IsVisible
+        };
+        dlg.SetResourceReference(Window.BackgroundProperty, "BgBrush");
+        dlg.SetResourceReference(Window.ForegroundProperty, "InkBrush");
+
+        var head = new TextBlock { Text = "选择要免打扰的微信会话", FontSize = 14, FontWeight = FontWeights.Bold };
+        head.SetResourceReference(TextBlock.ForegroundProperty, "InkBrush");
+        var subHead = new TextBlock { Text = "仅静音所选会话的新消息弹窗，其他消息与日程提醒照常提示。", FontSize = 11.5, Margin = new Thickness(0, 3, 0, 8), TextWrapping = TextWrapping.Wrap };
+        subHead.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush");
+
+        var searchBox = new TextBox { Tag = "搜索会话、备注、拼音首字母，或输入会话名…" };
+        var addCustomBtn = new Button { Content = "", Visibility = Visibility.Collapsed, Margin = new Thickness(0, 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
+        addCustomBtn.SetResourceReference(FrameworkElement.StyleProperty, "ChipButton");
+
+        var listBox = new ListBox { Height = 210, Margin = new Thickness(0, 8, 0, 0) };
+        var countText = new TextBlock { FontSize = 11.5, VerticalAlignment = VerticalAlignment.Center };
+        countText.SetResourceReference(TextBlock.ForegroundProperty, "MutedBrush");
+
+        var selectVisibleBtn = new Button { Content = "全选当前", Margin = new Thickness(0, 0, 6, 0) };
+        selectVisibleBtn.SetResourceReference(FrameworkElement.StyleProperty, "ChipButton");
+        var clearSelBtn = new Button { Content = "清空", Margin = new Thickness(0, 0, 6, 0) };
+        clearSelBtn.SetResourceReference(FrameworkElement.StyleProperty, "ChipButton");
+        var actionRow = new DockPanel { Margin = new Thickness(0, 8, 0, 0) };
+        DockPanel.SetDock(selectVisibleBtn, Dock.Left);
+        DockPanel.SetDock(clearSelBtn, Dock.Left);
+        DockPanel.SetDock(countText, Dock.Right);
+        actionRow.Children.Add(selectVisibleBtn);
+        actionRow.Children.Add(clearSelBtn);
+        actionRow.Children.Add(countText);
+
+        var durationBox = new ComboBox { MinWidth = 170 };
+        durationBox.Items.Add(new ComboBoxItem { Content = "30 分钟", Tag = 30 });
+        durationBox.Items.Add(new ComboBoxItem { Content = "1 小时", Tag = 60 });
+        durationBox.Items.Add(new ComboBoxItem { Content = "2 小时", Tag = 120 });
+        durationBox.Items.Add(new ComboBoxItem { Content = "今日内（至 24:00）", Tag = 0 });
+        durationBox.SelectedIndex = 1;
+        var durationRow = new DockPanel { Margin = new Thickness(0, 10, 0, 0) };
+        var durLabel = new TextBlock { Text = "免打扰时长", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) };
+        durLabel.SetResourceReference(TextBlock.ForegroundProperty, "InkBrush");
+        DockPanel.SetDock(durLabel, Dock.Left);
+        durationRow.Children.Add(durLabel);
+        durationRow.Children.Add(durationBox);
+
+        var ok = new Button { Content = "确定免打扰", IsDefault = true, MinWidth = 88 };
+        ok.SetResourceReference(FrameworkElement.StyleProperty, "PrimaryButton");
+        var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 72, Margin = new Thickness(0, 0, 8, 0) };
+        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 14, 0, 0) };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(ok);
+
+        var visibleTitles = new List<string>();
+        Action updateFooter = delegate {
+            countText.Text = "已选 " + chosen.Count + " 个会话";
+            ok.IsEnabled = chosen.Count > 0;
+        };
+        Action rebuildList = null;
+        rebuildList = delegate {
+            string filter = searchBox.Text.Trim();
+            listBox.Items.Clear();
+            visibleTitles.Clear();
+            foreach (var title in candidates)
+            {
+                if (filter.Length > 0 && !MatchChat(title, filter)) continue;
+                visibleTitles.Add(title);
+                string currentTitle = title;
+                long activeEnd = State.ChatQuietEnd(currentTitle, now);
+                string suffix = activeEnd > 0 ? "（免打扰至 " + new DateTime(activeEnd).ToString("HH:mm") + "）" : "";
+                var cb = new CheckBox
+                {
+                    Content = currentTitle + suffix,
+                    IsChecked = chosen.Contains(currentTitle),
+                    Margin = new Thickness(2, 3, 2, 3),
+                    HorizontalContentAlignment = HorizontalAlignment.Stretch
+                };
+                cb.Click += delegate {
+                    if (cb.IsChecked == true) chosen.Add(currentTitle);
+                    else chosen.Remove(currentTitle);
+                    updateFooter();
+                };
+                listBox.Items.Add(cb);
+            }
+            if (filter.Length > 0 && !seen.Contains(filter))
+            {
+                addCustomBtn.Content = "＋ 添加并勾选「" + filter + "」";
+                addCustomBtn.Visibility = Visibility.Visible;
+            }
+            else addCustomBtn.Visibility = Visibility.Collapsed;
+            updateFooter();
+        };
+
+        searchBox.TextChanged += delegate { rebuildList(); };
+        addCustomBtn.Click += delegate {
+            string custom = searchBox.Text.Trim();
+            if (String.IsNullOrWhiteSpace(custom)) return;
+            addCandidate(custom);
+            chosen.Add(custom);
+            searchBox.Clear();
+            rebuildList();
+        };
+        selectVisibleBtn.Click += delegate {
+            foreach (var t in visibleTitles) chosen.Add(t);
+            rebuildList();
+        };
+        clearSelBtn.Click += delegate {
+            chosen.Clear();
+            rebuildList();
+        };
+        ok.Click += delegate { dlg.DialogResult = true; };
+        cancel.Click += delegate { dlg.DialogResult = false; };
+
+        var layout = new StackPanel { Margin = new Thickness(18, 16, 18, 16) };
+        layout.Children.Add(head);
+        layout.Children.Add(subHead);
+        layout.Children.Add(searchBox);
+        layout.Children.Add(addCustomBtn);
+        layout.Children.Add(listBox);
+        layout.Children.Add(actionRow);
+        layout.Children.Add(durationRow);
+        layout.Children.Add(buttons);
+        dlg.Content = layout;
+        dlg.Loaded += delegate { searchBox.Focus(); };
+        rebuildList();
+
+        if (dlg.ShowDialog() == true && chosen.Count > 0)
+        {
+            var selectedItem = durationBox.SelectedItem as ComboBoxItem;
+            int mins = selectedItem != null && selectedItem.Tag is int ? (int)selectedItem.Tag : 60;
+            QuietChats(chosen, mins);
+        }
     }
     void UpdateChatGroups(GroupDef group)
     {

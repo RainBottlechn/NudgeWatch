@@ -67,7 +67,11 @@ namespace NudgeWatch
             Forms = new Forms(SaveReminder);
             SetupWorkItems();
             Alerts.Navigate = Jump;
-            Alerts.QuietNow=delegate { State.TemporaryUntil=clock().AddHours(1).Ticks; Changed(); };
+            Alerts.QuietNow = delegate { QuietAllChats(60); };
+            Alerts.QuietAll = QuietAllChats;
+            Alerts.QuietChat = delegate(string chat, int minutes) { QuietChats(new[] { chat }, minutes); };
+            Alerts.PickQuietChats = PickQuietChats;
+            Alerts.SuggestQuietChats = SuggestQuietChats;
             Panel.Click("New", delegate {
                 bool inTasks = Panel.Part<TabControl>("Tabs").SelectedItem == Panel.Part<TabItem>("TasksTab");
                 if (inTasks)
@@ -89,12 +93,15 @@ namespace NudgeWatch
             Panel.Click("Quiet", delegate { ToggleQuiet(); });
             var menu = QuietMenu();
             menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+            menu.Opened += delegate { menu.Items.Clear(); PopulateQuietMenuItems(menu.Items); };
             Panel.Click("QuietMenu", delegate { menu.PlacementTarget = Panel.Part<Border>("QuietSplit"); menu.IsOpen = true; });
             var mode = Panel.Part<ComboBox>("Default");
             mode.ItemsSource = new[] {"默认弱提醒","默认强提醒"};
             mode.SelectedIndex = State.DefaultLevel == 3 ? 1 : 0;
             mode.SelectionChanged += delegate { State.DefaultLevel = mode.SelectedIndex + 2; Persist(); };
-            Panel.Closing += (s,e) => { if (!exiting) { e.Cancel = true; Panel.Hide(); } };
+            Panel.Closing += (s,e) => { if (!exiting) { e.Cancel = true; HidePanelToTray(); } };
+            Panel.IsVisibleChanged += delegate { UpdateBallToolTip(); };
+            Panel.StateChanged += delegate { UpdateBallToolTip(); };
             Panel.SourceInitialized += delegate {
                 hwnd = new WindowInteropHelper(Panel).Handle;
                 HwndSource.FromHwnd(hwnd).AddHook(Hotkey);
@@ -104,12 +111,7 @@ namespace NudgeWatch
             };
             Ball.Left = SystemParameters.WorkArea.Right - Ball.Width;
             Ball.Top = SystemParameters.WorkArea.Top + 120;
-            var ballMenu = QuietMenu();
-            MenuItem(ballMenu, "打开主面板", ShowPanel);
-            MenuItem(ballMenu, "快速建提醒", Forms.OpenQuick);
-            MenuItem(ballMenu, "收起微信（最小化保活）", MinimizeWeChat);
-            MenuItem(ballMenu, "一键将微信列表回顶", ReturnWechatTop);
-            Ball.ContextMenu = ballMenu;
+            Ball.ContextMenu = new ContextMenu();
             Ball.Click("WeChatToggle", ToggleWeChatWindow);
             Point down = new Point(); bool dragged = false;
             Ball.MouseLeftButtonDown += (s,e) => {
@@ -129,7 +131,7 @@ namespace NudgeWatch
                 if (dragged) return;
                 if (lost) {WakeWeChat(); return;}
                 if (Alerts.Current != null && Alerts.Current.Chat != null) Jump(Alerts.Current.Chat);
-                else ShowPanel();
+                else TogglePanel();
             };
             Ball.MouseUp += (s, e) => {
                 if (e.ChangedButton == MouseButton.Middle) ToggleWeChatWindow();
@@ -158,7 +160,21 @@ namespace NudgeWatch
         {
             Panel.Show(); Ball.Show(); RefreshAgenda(); Tick(); timer.Start(); monitor.Start();
         }
-        public void ShowPanel() { Panel.Show(); Panel.WindowState = WindowState.Normal; Panel.Activate(); }
+        public bool IsPanelOpen() { return Panel.IsVisible && Panel.WindowState != WindowState.Minimized; }
+        public void ShowPanel() { Panel.Show(); Panel.WindowState = WindowState.Normal; Panel.Activate(); UpdateBallToolTip(); }
+        public void HidePanelToTray() { Panel.Hide(); UpdateBallToolTip(); }
+        public void TogglePanel()
+        {
+            if (IsPanelOpen())
+            {
+                foreach (Window owned in Panel.OwnedWindows)
+                {
+                    if (owned.IsVisible) { owned.Activate(); return; }
+                }
+                HidePanelToTray();
+            }
+            else ShowPanel();
+        }
         void Persist() { store.Save(State); }
         public void SaveReminder(Reminder item)
         {
@@ -178,13 +194,63 @@ namespace NudgeWatch
         ContextMenu QuietMenu()
         {
             var menu = new ContextMenu();
-            foreach (int minutes in new[] {30,60,120})
+            PopulateQuietMenuItems(menu.Items);
+            return menu;
+        }
+        void PopulateQuietMenuItems(ItemCollection items)
+        {
+            foreach (int minutes in new[] { 30, 60, 120 })
             {
                 int duration = minutes;
-                MenuItem(menu, "立即免打扰 " + minutes + " 分钟", delegate { State.TemporaryUntil = clock().AddMinutes(duration).Ticks; Changed(); });
+                var mi = new MenuItem { Header = "立即免打扰 " + minutes + " 分钟" };
+                mi.Click += delegate { QuietAllChats(duration); };
+                items.Add(mi);
             }
-            MenuItem(menu, "提前解除", delegate { State.Release(clock()); Changed(); });
-            return menu;
+            var pick = new MenuItem { Header = "指定会话免打扰…" };
+            pick.Click += delegate { PickQuietChats(null); };
+            items.Add(pick);
+            var now = clock();
+            var activeChats = State.ActiveQuietChats(now);
+            if (activeChats.Count > 0)
+            {
+                items.Add(new Separator());
+                foreach (var chat in activeChats)
+                {
+                    string target = chat;
+                    long endTicks = State.ChatQuietEnd(target, now);
+                    var rel = new MenuItem { Header = "解除「" + target + "」免打扰（至 " + new DateTime(endTicks).ToString("HH:mm") + "）" };
+                    rel.Click += delegate { ReleaseChatQuiet(target); };
+                    items.Add(rel);
+                }
+                if (activeChats.Count > 1)
+                {
+                    var relAll = new MenuItem { Header = "解除全部指定会话免打扰" };
+                    relAll.Click += delegate { ReleaseAllChatQuiets(); };
+                    items.Add(relAll);
+                }
+            }
+            items.Add(new Separator());
+            var release = new MenuItem { Header = "提前解除" };
+            release.Click += delegate { State.Release(clock()); Changed(); };
+            items.Add(release);
+        }
+        string FormatQuietStatus(DateTime now, long until)
+        {
+            if (until > 0) return " · 免打扰至 " + new DateTime(until).ToString("HH:mm");
+            var activeChats = State.ActiveQuietChats(now);
+            if (activeChats.Count == 1)
+                return " · 「" + activeChats[0] + "」免打扰至 " + new DateTime(State.ChatQuietEnd(activeChats[0], now)).ToString("HH:mm");
+            if (activeChats.Count > 1)
+                return " · " + activeChats.Count + " 个会话免打扰中";
+            return "";
+        }
+        void UpdateBallToolTip()
+        {
+            var now = clock();
+            string quiet = FormatQuietStatus(now, State.QuietEnd(now));
+            string drift = !lost && viewportDrifted ? ViewportWarning : "";
+            string panelHint = IsPanelOpen() ? " · 左键收入托盘" : " · 左键打开主面板";
+            Ball.ToolTip = (lost ? "微信已进托盘并暂停提醒 · 左键唤醒，建议平时用「—」最小化" : connection + panelHint) + quiet + drift;
         }
         static void MenuItem(ContextMenu menu, string title, Action action)
         {
@@ -203,6 +269,15 @@ namespace NudgeWatch
         FrameworkElement ChatLeafView(string title, KnownChat entry, int level, bool custom, int unread, bool showGroupPill)
         {
             var right = new List<UIElement>();
+            long chatQuietEnd = State.ChatQuietEnd(title, clock());
+            if (chatQuietEnd > 0 && !chatMultiMode)
+            {
+                string currentTitle = title;
+                string endStr = new DateTime(chatQuietEnd).ToString("HH:mm");
+                right.Add(Rows.PillButton("☾ " + endStr, "SubCardBrush", "QuietBrush",
+                    "免打扰至 " + endStr + "，点击解除或调整",
+                    btn => OpenChatMenu(BuildChatQuietMenu(currentTitle), btn)));
+            }
             if (showGroupPill && !chatMultiMode)
             {
                 string assigned = CustomGroup(title);
@@ -301,6 +376,37 @@ namespace NudgeWatch
             items.Add(create);
         }
 
+        ContextMenu BuildChatQuietMenu(string title)
+        {
+            var menu = new ContextMenu();
+            PopulateChatQuietMenuItems(menu.Items, new List<string> { title });
+            return menu;
+        }
+
+        void PopulateChatQuietMenuItems(ItemCollection items, List<string> targets)
+        {
+            DateTime now = clock();
+            if (targets.Any(t => State.ChatQuietEnd(t, now) > 0))
+            {
+                var release = new MenuItem { Header = targets.Count > 1 ? "解除已选会话免打扰" : "解除免打扰" };
+                release.Click += delegate { ReleaseChatsQuiet(targets); };
+                items.Add(release);
+                items.Add(new Separator());
+            }
+            foreach (var opt in new[] {
+                new { Label = "免打扰 30 分钟", Minutes = 30 },
+                new { Label = "免打扰 1 小时", Minutes = 60 },
+                new { Label = "免打扰 2 小时", Minutes = 120 },
+                new { Label = "今日内免打扰（至 24:00）", Minutes = 0 }
+            })
+            {
+                int mins = opt.Minutes;
+                var mi = new MenuItem { Header = opt.Label };
+                mi.Click += delegate { QuietChats(targets, mins); };
+                items.Add(mi);
+            }
+        }
+
         ContextMenu BuildChatMoveMenu(IEnumerable<string> targets)
         {
             var list = targets.Where(t => !String.IsNullOrWhiteSpace(t)).Distinct(StringComparer.Ordinal).ToList();
@@ -379,6 +485,9 @@ namespace NudgeWatch
                 var note = Prompt("会话备注", entryData == null ? "" : entryData.Alias ?? "");
                 if (note != null) { knownChats.Annotate(title, note, Group(title), clock()); TreeChanged(); }
             });
+            var quietSub = new MenuItem { Header = batchTargets.Count > 1 ? "临时免打扰（已选 " + batchTargets.Count + " 项）" : "临时免打扰" };
+            PopulateChatQuietMenuItems(quietSub.Items, batchTargets);
+            menu.Items.Add(quietSub);
             foreach (var entry in new[] { "忽略", "仅记录", "弱提醒", "强提醒" }.Select((t, i) => new { t, i }))
             {
                 var level = entry.i;
@@ -424,7 +533,10 @@ namespace NudgeWatch
             string knownKey = String.Join(",", knownChats.All.Select(c => c.Title + ":" + (c.Alias ?? "")));
             string selKey = chatMultiMode + "|" + String.Join(",", selectedChats.OrderBy(x => x, StringComparer.Ordinal));
             string collapseKey = archivedUngroupedExpanded + "|" + String.Join(",", State.CollapsedChatGroups.OrderBy(x => x, StringComparer.Ordinal));
-            string key = filter + "\f" + groupsKey + "\f" + levelsKey + "\f" + knownKey + "\f" + selKey + "\f" + collapseKey + "\f" +
+            long nowTicks = clock().Ticks;
+            string chatQuietKey = State.ChatQuietUntil == null ? "" : String.Join(",",
+                State.ChatQuietUntil.Where(kv => kv.Value > nowTicks).OrderBy(kv => kv.Key, StringComparer.Ordinal).Select(kv => kv.Key + "=" + kv.Value));
+            string key = filter + "\f" + groupsKey + "\f" + levelsKey + "\f" + knownKey + "\f" + selKey + "\f" + collapseKey + "\f" + chatQuietKey + "\f" +
                 String.Join("\n", rows.Select(s => s.Title + "\t" + s.Unread));
             if (treeKey == key) return;
             treeKey = key;
@@ -633,7 +745,21 @@ namespace NudgeWatch
                 Alerts.Push(new Notice { Level = 2, Title = "免打扰已结束", Body = count + " 个会话有新消息" });
             }
             lastQuietEnd = until;
-            string quiet = until == 0 ? "" : " · 免打扰至 " + new DateTime(until).ToString("HH:mm");
+            List<string> expiredWithMsg;
+            var expiredChats = State.ExpireChatQuiets(now, out expiredWithMsg);
+            if (expiredChats.Count > 0)
+            {
+                Persist();
+                TreeChanged();
+            }
+            if (expiredWithMsg.Count > 0 && until == 0)
+            {
+                string body = expiredWithMsg.Count == 1
+                    ? "「" + expiredWithMsg[0] + "」免打扰期间有新消息"
+                    : expiredWithMsg.Count + " 个指定会话免打扰期间有新消息：" + String.Join("、", expiredWithMsg.Take(3)) + (expiredWithMsg.Count > 3 ? " 等" : "");
+                Alerts.Push(new Notice { Level = 2, Title = "免打扰已结束", Body = body });
+            }
+            string quiet = FormatQuietStatus(now, until);
             string pinHint = (!lost && rows.Count > 0 && rows.All(r => r.IsPinned)) ? " · 仅见置顶" : "";
             string lostHint = lost ? "（已退至托盘，建议用最小化保活）" : "";
             string drift = !lost && viewportDrifted ? ViewportWarning : "";
@@ -643,7 +769,7 @@ namespace NudgeWatch
             statusText.Text = connection + lostHint + quiet + pinHint + drift +
                 (knownChats.Error == null ? "" : " · " + knownChats.Error) +
                 (archive.Error == null ? "" : " · " + archive.Error) + hotkeyError + noteHint;
-            Ball.ToolTip = (lost ? "微信已进托盘并暂停提醒 · 左键唤醒，建议平时用「—」最小化" : connection) + quiet + drift;
+            UpdateBallToolTip();
             Panel.Part<Button>("Quiet").Content = until == 0 ? "☾ 免打扰" : "☾ 解除 · 至 " + new DateTime(until).ToString("HH:mm");
             UpdateStatusDot(drift.Length > 0);
             UpdateBallAppearance();
@@ -711,7 +837,7 @@ namespace NudgeWatch
                 archive.Add(change.Events.Select(e => new ArchiveEntry {
                     ts = capturedAt.Ticks, time = capturedAt.ToString("HH:mm:ss"), chat = e.Title, group = Group(e.Title),
                     preview = e.Preview, unread = e.Unread, level = State.ChatLevel(e),
-                    muted = quietActive || rows.Any(r => r.Title == e.Title && r.Muted)
+                    muted = quietActive || State.ChatQuietEnd(e.Title, capturedAt) > 0 || rows.Any(r => r.Title == e.Title && r.Muted)
                 }));
             foreach (string title in change.Read) Alerts.ClearChats(n => n.Chat == title);
             foreach (var e in change.Events)
@@ -721,6 +847,11 @@ namespace NudgeWatch
                 if (lastQuietEnd > 0)
                 {
                     if (!State.MutedChats.Contains(e.Title)) { State.MutedChats.Add(e.Title); Persist(); }
+                }
+                else if (State.ChatQuietEnd(e.Title, capturedAt) > 0)
+                {
+                    if (State.ChatQuietPending == null) State.ChatQuietPending = new List<string>();
+                    if (!State.ChatQuietPending.Contains(e.Title)) { State.ChatQuietPending.Add(e.Title); Persist(); }
                 }
                 else Alerts.Push(new Notice { Title = e.Title, Chat = e.Title, Body = e.Preview, Level = level });
             }
