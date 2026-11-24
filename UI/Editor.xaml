@@ -1,0 +1,132 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="会议与日程提醒" Width="380" SizeToContent="Height" ResizeMode="NoResize"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource BgBrush}" Foreground="{DynamicResource InkBrush}">
+  <Window.Resources>
+    <Style x:Key="Card" TargetType="Border">
+      <Setter Property="Padding" Value="12"/>
+      <Setter Property="CornerRadius" Value="10"/>
+      <Setter Property="Background" Value="{DynamicResource CardBrush}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+  </Window.Resources>
+  <Grid>
+    <Border Background="{DynamicResource CanvasOverlayBrush}" IsHitTestVisible="False"/>
+    <StackPanel>
+      <Grid Height="{DynamicResource OilDialogBannerHeight}" Background="{DynamicResource OilBannerBrush}">
+        <Border Background="{DynamicResource OilBannerScrimBrush}" Visibility="{DynamicResource OilBannerCaptionVisibility}"/>
+        <Border Height="6" VerticalAlignment="Bottom" Background="{DynamicResource BannerFadeBrush}" Visibility="{DynamicResource BannerFadeVisibility}"/>
+        <TextBlock Text="{DynamicResource OilBannerCaption}" Visibility="{DynamicResource OilBannerCaptionVisibility}"
+                   Style="{StaticResource BannerCaption}" Margin="0,0,10,4"/>
+      </Grid>
+      <StackPanel Margin="14,12,14,14">
+        <!-- 事项与时间 -->
+        <Border Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock Text="事项标题" Style="{StaticResource FieldLabel}"/>
+            <TextBox x:Name="Subject" MaxLength="80" Tag="例如：周会评审"/>
+            <StackPanel x:Name="TaskFields" Visibility="Collapsed" Margin="0,10,0,0">
+              <TextBlock Text="任务分组" Style="{StaticResource FieldLabel}"/>
+              <ComboBox x:Name="TaskGroup" DisplayMemberPath="Name" ToolTip="任务分组"/>
+              <CheckBox x:Name="TimedTask" Content="设置到期提醒" Margin="0,10,0,6"/>
+              <TextBlock Text="下次追催（可留空）" Style="{StaticResource FieldLabel}"/>
+              <TextBox x:Name="FollowUp" Tag="yyyy-MM-dd HH:mm" ToolTip="yyyy-MM-dd HH:mm"/>
+            </StackPanel>
+            <DockPanel Margin="0,10,0,4">
+              <TextBlock DockPanel.Dock="Right" Text="悬停滚轮可调节" FontSize="10.5" Foreground="{DynamicResource MutedBrush}" Opacity="0.8"/>
+              <TextBlock Text="计划日期与时间" Style="{StaticResource FieldLabel}" Margin="0"/>
+            </DockPanel>
+            <DockPanel x:Name="ScheduleFields">
+              <TextBox DockPanel.Dock="Right" Width="84" Margin="6,0,0,0" x:Name="StartTime" FontSize="13"
+                       HorizontalContentAlignment="Center" Typography.NumeralAlignment="Tabular"
+                       ToolTip="悬停左半部分滚轮调小时，右半部分调分钟"/>
+              <DatePicker x:Name="Day" ToolTip="悬停滚轮切换日期"/>
+            </DockPanel>
+          </StackPanel>
+        </Border>
+
+        <!-- 周期与等级 -->
+        <Border Margin="0,8,0,0" Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock x:Name="LevelLabel" Text="周期与提醒等级" Style="{StaticResource FieldLabel}"/>
+            <ComboBox x:Name="Repeat" Margin="0,0,0,8"/>
+            <ComboBox x:Name="Level" Visibility="Collapsed"/>
+            <Border Padding="2" CornerRadius="9" Background="{DynamicResource SubCardBrush}">
+              <UniformGrid Rows="1">
+                <RadioButton x:Name="LevelSeg1" GroupName="Level" Style="{StaticResource SegmentToggle}" ToolTip="仅记录，不弹窗">
+                  <StackPanel Orientation="Horizontal">
+                    <Ellipse Width="7" Height="7" Stroke="{DynamicResource MutedBrush}" StrokeThickness="1.4" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="记录"/>
+                  </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="LevelSeg2" GroupName="Level" Style="{StaticResource SegmentToggle}" ToolTip="右下角浮片，数秒后自动收起">
+                  <StackPanel Orientation="Horizontal">
+                    <Ellipse Width="7" Height="7" Fill="{DynamicResource L2Brush}" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="普通"/>
+                  </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="LevelSeg3" GroupName="Level" Style="{StaticResource SegmentToggle}" ToolTip="屏幕居中弹窗并提示音，需手动处理">
+                  <StackPanel Orientation="Horizontal">
+                    <Ellipse Width="7" Height="7" Fill="{DynamicResource L3Brush}" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="重要"/>
+                  </StackPanel>
+                </RadioButton>
+                <RadioButton x:Name="LevelSeg4" GroupName="Level" Style="{StaticResource SegmentToggle}" ToolTip="收起其他窗口，桌面级强提醒">
+                  <StackPanel Orientation="Horizontal">
+                    <Ellipse Width="9" Height="9" Fill="{DynamicResource L3Brush}" Stroke="{DynamicResource CardBrush}" StrokeThickness="1.5" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="紧急"/>
+                  </StackPanel>
+                </RadioButton>
+              </UniformGrid>
+            </Border>
+            <TextBox x:Name="Days" Margin="0,8,0,0" ToolTip="周几 1–7、每月 1–31、每年 MM-dd 或 yyyy-MM-dd，用逗号分隔"/>
+            <TextBlock x:Name="DaysHint" Margin="2,4,0,0" FontSize="11" Foreground="{DynamicResource MutedBrush}"/>
+          </StackPanel>
+        </Border>
+
+        <!-- 会议免打扰 -->
+        <Border x:Name="QuietCard" Margin="0,8,0,0" Style="{StaticResource Card}">
+          <StackPanel>
+            <CheckBox x:Name="Avoid" Content="会议 / 共享屏幕期间避免微信提醒" FontWeight="SemiBold"/>
+            <StackPanel x:Name="QuietFields" Margin="0,10,0,0" IsEnabled="{Binding IsChecked, ElementName=Avoid}">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="10"/>
+                  <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+                <StackPanel>
+                  <TextBlock Text="提前缓冲（分钟）" Style="{StaticResource FieldLabel}"/>
+                  <TextBox x:Name="Delay" HorizontalContentAlignment="Center" Typography.NumeralAlignment="Tabular" ToolTip="悬停滚轮调整缓冲分钟"/>
+                </StackPanel>
+                <StackPanel Grid.Column="2">
+                  <TextBlock Text="结束时刻" Style="{StaticResource FieldLabel}"/>
+                  <TextBox x:Name="EndTime" HorizontalContentAlignment="Center" Typography.NumeralAlignment="Tabular" ToolTip="悬停左/右半区滚轮调整结束时间"/>
+                </StackPanel>
+              </Grid>
+              <DockPanel Margin="0,8,0,0">
+                <TextBlock Text="会议时长" FontSize="11" Foreground="{DynamicResource MutedBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <WrapPanel>
+                  <Button x:Name="Half" Style="{StaticResource ChipButton}" Margin="0,0,6,0" Content="30 分钟"/>
+                  <Button x:Name="One" Style="{StaticResource ChipButton}" Margin="0,0,6,0" Content="1 小时"/>
+                  <Button x:Name="Two" Style="{StaticResource ChipButton}" Content="2 小时"/>
+                </WrapPanel>
+              </DockPanel>
+            </StackPanel>
+          </StackPanel>
+        </Border>
+
+        <TextBlock x:Name="Error" Margin="2,8,2,0" FontSize="11.5" Foreground="{DynamicResource L3Brush}" TextWrapping="Wrap"/>
+        <Button x:Name="SwitchKind" Visibility="Collapsed" Margin="0,4,0,0"/>
+        <DockPanel Margin="0,10,0,0">
+          <Button x:Name="CompleteItem" DockPanel.Dock="Left" Visibility="Collapsed" Padding="10,7" Margin="0,0,8,0" Content="✓ 完成提醒"/>
+          <Button x:Name="Save" DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}" IsDefault="True" Content="保存提醒" Padding="18,7"/>
+          <Button x:Name="Cancel" DockPanel.Dock="Right" Content="取消" Padding="14,7" Margin="0,0,8,0"/>
+          <TextBlock x:Name="FooterHint" VerticalAlignment="Center" FontSize="10.5" Foreground="{DynamicResource MutedBrush}" Opacity="0.8" Text="Enter 保存 · Esc 取消"/>
+        </DockPanel>
+      </StackPanel>
+    </StackPanel>
+  </Grid>
+</Window>

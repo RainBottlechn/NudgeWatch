@@ -1,0 +1,52 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="NudgeWatch · 提醒" Width="340" SizeToContent="Height"
+        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
+        Foreground="{DynamicResource InkBrush}"
+        ShowInTaskbar="False" ShowActivated="False" Topmost="True">
+  <Border x:Name="CardBorder" Margin="10" CornerRadius="12" BorderThickness="1"
+          Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}">
+    <Border.Effect>
+      <DropShadowEffect Color="#000000" BlurRadius="18" ShadowDepth="4" Opacity="0.20"/>
+    </Border.Effect>
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="Auto"/>
+        <ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <!-- 油画主题 L2 顶部装饰细线（内嵌圆角，避免越界） -->
+      <Border x:Name="ArtLine" Grid.ColumnSpan="2" Height="3.5" Margin="12,0,12,0" VerticalAlignment="Top"
+              CornerRadius="0,0,2,2" Visibility="Collapsed"/>
+      <!-- 左侧严重度色轨（内嵌胶囊条，贴合圆角卡片不溢出） -->
+      <Border x:Name="LevelBar" Width="4" Margin="9,12,0,12" CornerRadius="2" Background="{DynamicResource L2Brush}"/>
+      <DockPanel Grid.Column="1" Margin="11,12,14,12">
+        <DockPanel DockPanel.Dock="Top">
+          <TextBlock x:Name="Meta" DockPanel.Dock="Right" FontSize="11" VerticalAlignment="Center"
+                     Foreground="{DynamicResource MutedBrush}" Typography.NumeralAlignment="Tabular"/>
+          <StackPanel Orientation="Horizontal">
+            <Border x:Name="LevelTag" CornerRadius="9" Padding="8,1,8,2" Background="{DynamicResource L2Brush}" VerticalAlignment="Center">
+              <TextBlock x:Name="LevelText" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource OnL2Brush}" Text="普通"/>
+            </Border>
+            <TextBlock x:Name="Source" Margin="8,0,0,0" FontSize="11.5" VerticalAlignment="Center"
+                       Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis"/>
+          </StackPanel>
+        </DockPanel>
+        <TextBlock x:Name="Heading" DockPanel.Dock="Top" Margin="0,8,0,0" FontSize="15" FontWeight="Bold"
+                   Foreground="{DynamicResource InkBrush}" TextWrapping="Wrap" MaxHeight="44" TextTrimming="CharacterEllipsis"/>
+        <DockPanel DockPanel.Dock="Bottom" Margin="0,12,0,0" LastChildFill="False">
+          <Button x:Name="Jump" Style="{StaticResource PrimaryButton}" Padding="14,5" Margin="0,0,6,0" Content="打开会话"/>
+          <Button x:Name="Complete" Style="{StaticResource PrimaryButton}" Padding="14,5" Margin="0,0,6,0" Content="完成"/>
+          <Button x:Name="Snooze" Margin="0,0,6,0" Content="稍后 ▾"/>
+          <Button x:Name="QuietNow" Margin="0,0,6,0" Content="免打扰 1 小时"/>
+          <Button x:Name="More" DockPanel.Dock="Right" Padding="9,5" Content="⋯" ToolTip="更多操作" Visibility="Collapsed"/>
+          <Button x:Name="Ack" DockPanel.Dock="Right" Margin="0,0,6,0" Content="知道了"/>
+          <Button x:Name="Convert" Visibility="Collapsed" Content="转为任务"/>
+        </DockPanel>
+        <Border x:Name="BodyCard" Margin="0,8,0,0" Padding="10,8" CornerRadius="8" Background="{DynamicResource SubCardBrush}">
+          <TextBlock x:Name="Body" FontSize="12.5" LineHeight="19" Foreground="{DynamicResource InkBrush}" TextWrapping="Wrap"
+                     VerticalAlignment="Top" MaxHeight="88" TextTrimming="CharacterEllipsis"/>
+        </Border>
+      </DockPanel>
+    </Grid>
+  </Border>
+</Window>

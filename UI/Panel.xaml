@@ -1,0 +1,273 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="NudgeWatch" Width="380" Height="580" MinWidth="350" MinHeight="460"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource BgBrush}" Foreground="{DynamicResource InkBrush}">
+  <Window.Resources>
+    <!-- 结构化提醒行：等级圆点 / 时间列 / 标题 / 状态胶囊 / 行内一键完成 -->
+    <DataTemplate x:Key="AgendaRowTemplate">
+      <DockPanel>
+        <Button x:Name="RowDoneBtn" DockPanel.Dock="Right" Tag="{Binding Item}" MinWidth="24" Width="24" Height="24" Padding="0" Margin="6,0,0,0"
+                VerticalAlignment="Center" Style="{StaticResource IconButton}" Content="✓" FontSize="12" FontWeight="Bold"
+                ToolTip="完成此提醒（周期提醒将推进到下一次）"/>
+        <Ellipse x:Name="Dot" DockPanel.Dock="Left" Width="8" Height="8" Margin="0,6,10,0" VerticalAlignment="Top"
+                 Fill="{DynamicResource L2Brush}" StrokeThickness="1.5"/>
+        <StackPanel DockPanel.Dock="Left" Width="46" Margin="0,0,8,0">
+          <TextBlock Text="{Binding TimeText}" FontSize="13" FontWeight="SemiBold" Typography.NumeralAlignment="Tabular"/>
+          <TextBlock Text="{Binding DayText}" FontSize="10.5" Opacity="0.72" Margin="0,1,0,0"/>
+        </StackPanel>
+        <StackPanel>
+          <TextBlock x:Name="TitleText" Text="{Binding Title}" FontSize="13" TextTrimming="CharacterEllipsis"/>
+          <WrapPanel x:Name="TagRow" Margin="0,3,0,0">
+            <Border x:Name="StatusPill" Style="{StaticResource Pill}" Background="{DynamicResource WarningSoftBrush}" Margin="0,0,4,2">
+              <TextBlock Text="{Binding Status}" Style="{StaticResource PillText}" Foreground="{DynamicResource WarningBrush}"/>
+            </Border>
+            <ItemsControl ItemsSource="{Binding Tags}" Focusable="False">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Style="{StaticResource Pill}" Margin="0,0,4,2">
+                    <TextBlock Text="{Binding}" Style="{StaticResource PillText}"/>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </WrapPanel>
+        </StackPanel>
+      </DockPanel>
+      <DataTemplate.Triggers>
+        <DataTrigger Binding="{Binding Level}" Value="1">
+          <Setter TargetName="Dot" Property="Fill" Value="Transparent"/>
+          <Setter TargetName="Dot" Property="Stroke" Value="{DynamicResource MutedBrush}"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding Level}" Value="3">
+          <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource L3Brush}"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding Level}" Value="4">
+          <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource L3Brush}"/>
+          <Setter TargetName="Dot" Property="Width" Value="10"/>
+          <Setter TargetName="Dot" Property="Height" Value="10"/>
+          <Setter TargetName="Dot" Property="Margin" Value="-1,5,9,0"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding Status}" Value="{x:Null}">
+          <Setter TargetName="StatusPill" Property="Visibility" Value="Collapsed"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding HasTags}" Value="False">
+          <Setter TargetName="TagRow" Property="Visibility" Value="Collapsed"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding Emphasis}" Value="True">
+          <Setter TargetName="TitleText" Property="FontWeight" Value="SemiBold"/>
+        </DataTrigger>
+        <DataTrigger Binding="{Binding Inactive}" Value="True">
+          <Setter TargetName="TitleText" Property="Opacity" Value="0.7"/>
+          <Setter TargetName="Dot" Property="Opacity" Value="0.4"/>
+          <Setter TargetName="RowDoneBtn" Property="Visibility" Value="Collapsed"/>
+        </DataTrigger>
+      </DataTemplate.Triggers>
+    </DataTemplate>
+  </Window.Resources>
+  <Grid>
+    <Border Background="{DynamicResource CanvasOverlayBrush}" IsHitTestVisible="False"/>
+    <DockPanel>
+      <!-- 名画横幅 / 经典主题色条 -->
+      <Grid DockPanel.Dock="Top" Height="{DynamicResource OilBannerHeight}" Background="{DynamicResource OilBannerBrush}">
+        <Border Background="{DynamicResource OilBannerScrimBrush}" Visibility="{DynamicResource OilBannerCaptionVisibility}"/>
+        <Border Height="10" VerticalAlignment="Bottom" Background="{DynamicResource BannerFadeBrush}" Visibility="{DynamicResource BannerFadeVisibility}"/>
+        <TextBlock Text="{DynamicResource OilBannerCaption}" Visibility="{DynamicResource OilBannerCaptionVisibility}"
+                   Style="{StaticResource BannerCaption}" Margin="0,0,12,7"/>
+      </Grid>
+
+      <!-- 头部：品牌 + 免打扰 + 唯一主操作；状态胶囊 -->
+      <Border DockPanel.Dock="Top" Margin="12,10,12,8" Padding="12,10" CornerRadius="12"
+              Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+        <StackPanel>
+          <DockPanel>
+            <Border x:Name="NewSplit" DockPanel.Dock="Right" Style="{StaticResource SplitButtonGroup}">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="1"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button x:Name="New" Grid.Column="0" Style="{StaticResource SplitButtonLeft}" Content="＋ 新建" ToolTip="打开新建编辑器"/>
+                <Border Grid.Column="1" Background="{DynamicResource BorderBrush}" SnapsToDevicePixels="True"/>
+                <Button x:Name="NewMenu" Grid.Column="2" Style="{StaticResource SplitButtonRight}" ToolTip="快速新建（Alt+N）或选择新建类型">
+                  <Path Data="M 0 0 L 3.5 3.5 L 7 0" Stroke="{DynamicResource MutedBrush}" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,1,0,0"/>
+                </Button>
+              </Grid>
+            </Border>
+            <Border x:Name="QuietSplit" DockPanel.Dock="Right" Style="{StaticResource SplitButtonGroup}" Margin="0,0,6,0">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="Auto"/>
+                  <ColumnDefinition Width="1"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <Button x:Name="Quiet" Grid.Column="0" Style="{StaticResource SplitButtonLeft}" Content="☾ 免打扰" ToolTip="免打扰 1 小时；再次点击提前解除"/>
+                <Border Grid.Column="1" Background="{DynamicResource BorderBrush}" SnapsToDevicePixels="True"/>
+                <Button x:Name="QuietMenu" Grid.Column="2" Style="{StaticResource SplitButtonRight}" ToolTip="免打扰时长">
+                  <Path Data="M 0 0 L 3.5 3.5 L 7 0" Stroke="{DynamicResource MutedBrush}" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="0,1,0,0"/>
+                </Button>
+              </Grid>
+            </Border>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <Border Width="24" Height="24" CornerRadius="6" Background="{DynamicResource AccentBrush}">
+                <Viewbox Width="24" Height="24">
+                  <Canvas Width="24" Height="24">
+                    <Path Data="{StaticResource LogoN}" Stroke="{DynamicResource AccentTextBrush}" StrokeThickness="2.8"
+                          StrokeStartLineCap="Round" StrokeEndLineCap="Round"/>
+                    <Ellipse Canvas.Left="16.2" Canvas.Top="3.8" Width="4.8" Height="4.8" Fill="{DynamicResource LogoDotBrush}"/>
+                  </Canvas>
+                </Viewbox>
+              </Border>
+              <TextBlock Margin="8,0,0,0" Text="NudgeWatch" FontSize="15" FontWeight="Bold" VerticalAlignment="Center"
+                         Foreground="{DynamicResource InkBrush}"/>
+            </StackPanel>
+          </DockPanel>
+          <Border Margin="0,9,0,0" Padding="9,5" CornerRadius="8" Background="{DynamicResource SubCardBrush}">
+            <StackPanel>
+              <DockPanel x:Name="UndoBar" Visibility="Collapsed" Margin="0,0,0,5">
+                <Button x:Name="Undo" DockPanel.Dock="Right" Style="{StaticResource ChipButton}" Background="{DynamicResource CardBrush}"
+                        Content="↶ 撤销" ToolTip="Ctrl+Z"/>
+                <TextBlock x:Name="UndoText" Foreground="{DynamicResource InkBrush}" FontSize="11.5" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+              </DockPanel>
+              <DockPanel>
+                <Ellipse x:Name="StatusDot" Width="7" Height="7" Margin="0,5,7,0" VerticalAlignment="Top" Fill="{DynamicResource MutedBrush}"/>
+                <TextBlock x:Name="Status" FontSize="11.5" Foreground="{DynamicResource MutedBrush}" TextWrapping="Wrap"/>
+              </DockPanel>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </Border>
+
+      <TabControl x:Name="Tabs" SelectedIndex="2" Margin="12,0,12,12">
+        <!-- ═══ 提醒 ═══ -->
+        <TabItem x:Name="RemindersTab" Header="提醒">
+          <DockPanel Margin="0,8,0,0">
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+              <ComboBox x:Name="Scope" SelectedIndex="0" Visibility="Collapsed">
+                <ComboBoxItem Content="进行中"/>
+                <ComboBoxItem Content="今日"/>
+                <ComboBoxItem Content="已完成"/>
+                <ComboBoxItem Content="回收站"/>
+              </ComboBox>
+              <WrapPanel>
+                <RadioButton x:Name="ScopeChip0" GroupName="ReminderScope" Style="{StaticResource ChipToggle}" IsChecked="True" Content="进行中"/>
+                <RadioButton x:Name="ScopeChip1" GroupName="ReminderScope" Style="{StaticResource ChipToggle}" Content="今日"/>
+                <RadioButton x:Name="ScopeChip2" GroupName="ReminderScope" Style="{StaticResource ChipToggle}" Content="已完成"/>
+                <RadioButton x:Name="ScopeChip3" GroupName="ReminderScope" Style="{StaticResource ChipToggle}" Content="回收站"/>
+              </WrapPanel>
+            </DockPanel>
+            <!-- 上下文操作条：未选中时只给新建入口，选中后出现完成 / 编辑 / 删除 -->
+            <Border x:Name="ReminderBar" DockPanel.Dock="Bottom" Margin="0,8,0,0" Padding="8,6" CornerRadius="10"
+                    Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+              <DockPanel>
+                <Button x:Name="Delete" DockPanel.Dock="Right" Style="{StaticResource DangerButton}" Padding="9,4" Content="删除"/>
+                <Button x:Name="Edit" DockPanel.Dock="Right" Padding="9,4" Margin="0,0,6,0" Content="编辑"/>
+                <Button x:Name="Done" DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}" Padding="12,4" Margin="0,0,6,0" Content="完成"/>
+                <Button x:Name="Add" DockPanel.Dock="Left" Padding="10,4" Content="＋ 新建提醒" ToolTip="打开完整编辑器新建提醒"/>
+                <TextBlock x:Name="AgendaHint" VerticalAlignment="Center" Margin="8,0,0,0" FontSize="11.5"
+                           Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis"/>
+              </DockPanel>
+            </Border>
+            <Grid>
+              <ListBox x:Name="Agenda" SelectionMode="Extended" ItemTemplate="{StaticResource AgendaRowTemplate}"/>
+              <TextBlock x:Name="AgendaEmpty" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+                         Foreground="{DynamicResource MutedBrush}" FontSize="12" IsHitTestVisible="False" Visibility="Collapsed"
+                         Text="这里还没有提醒&#x0a;按 Alt+N 输入「15:00 评审」即可创建"/>
+            </Grid>
+          </DockPanel>
+        </TabItem>
+
+        <!-- ═══ 任务 ═══ -->
+        <TabItem x:Name="TasksTab" Header="任务">
+          <DockPanel Margin="0,8,0,0">
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+              <ComboBox x:Name="TaskScope" SelectedIndex="0" Visibility="Collapsed">
+                <ComboBoxItem Content="进行中"/>
+                <ComboBoxItem Content="今日"/>
+                <ComboBoxItem Content="已完成"/>
+                <ComboBoxItem Content="回收站"/>
+              </ComboBox>
+              <WrapPanel>
+                <RadioButton x:Name="TaskScopeChip0" GroupName="TaskScope" Style="{StaticResource ChipToggle}" IsChecked="True" Content="进行中"/>
+                <RadioButton x:Name="TaskScopeChip1" GroupName="TaskScope" Style="{StaticResource ChipToggle}" Content="今日"/>
+                <RadioButton x:Name="TaskScopeChip2" GroupName="TaskScope" Style="{StaticResource ChipToggle}" Content="已完成"/>
+                <RadioButton x:Name="TaskScopeChip3" GroupName="TaskScope" Style="{StaticResource ChipToggle}" Content="回收站"/>
+              </WrapPanel>
+            </DockPanel>
+            <DockPanel DockPanel.Dock="Top" Margin="0,0,0,6">
+              <Button x:Name="TaskGroups" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="⋯" ToolTip="任务分组：新建 / 重命名 / 删除"/>
+              <Button x:Name="TaskMulti" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="多选" ToolTip="开启复选框多选，或按住 Ctrl/Shift 点击"/>
+              <Button x:Name="ToggleTaskExpand" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="全折" ToolTip="一键折叠/展开所有任务分组"/>
+              <Border x:Name="PendingPill" Style="{StaticResource Pill}" HorizontalAlignment="Left" Background="{DynamicResource L3SoftBrush}" Padding="8,2,9,3">
+                <StackPanel Orientation="Horizontal">
+                  <Ellipse Width="6" Height="6" Fill="{DynamicResource L3Brush}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                  <TextBlock x:Name="PendingTasks" FontSize="11.5" FontWeight="SemiBold" Foreground="{DynamicResource L3Brush}"/>
+                </StackPanel>
+              </Border>
+            </DockPanel>
+            <Border x:Name="TaskBatchBar" DockPanel.Dock="Top" Visibility="Collapsed" Margin="0,0,0,6" Padding="8,5"
+                    CornerRadius="9" Background="{DynamicResource AccentSoftBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+              <WrapPanel VerticalAlignment="Center">
+                <TextBlock x:Name="TaskBatchCount" VerticalAlignment="Center" FontSize="11.5" FontWeight="SemiBold" Margin="0,0,8,2"/>
+                <Button x:Name="TaskBatchMove" Style="{StaticResource ChipButton}" Background="{DynamicResource CardBrush}" Margin="0,0,4,2" Content="切分组 ▾"/>
+                <Button x:Name="TaskBatchState" Style="{StaticResource ChipButton}" Background="{DynamicResource CardBrush}" Margin="0,0,4,2" Content="状态 ▾"/>
+                <Button x:Name="TaskBatchDone" Style="{StaticResource ChipButton}" Background="{DynamicResource CardBrush}" Margin="0,0,4,2" Content="批量完成"/>
+                <Button x:Name="TaskBatchDelete" Style="{StaticResource ChipButton}" Background="{DynamicResource CardBrush}" Foreground="{DynamicResource L3Brush}" Margin="0,0,4,2" Content="删除"/>
+                <Button x:Name="TaskBatchClear" Style="{StaticResource ChipButton}" Background="Transparent" Margin="0,0,0,2" Content="取消"/>
+              </WrapPanel>
+            </Border>
+            <Border x:Name="TaskBar" DockPanel.Dock="Bottom" Margin="0,8,0,0" Padding="8,6" CornerRadius="10"
+                    Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+              <DockPanel>
+                <Button x:Name="DeleteTask" DockPanel.Dock="Right" Style="{StaticResource DangerButton}" Padding="8,4" Content="删除"/>
+                <Button x:Name="MoveTaskGroup" DockPanel.Dock="Right" Padding="8,4" Margin="0,0,4,0" Content="切分组 ▾" ToolTip="快速将选中任务切换到其他分组"/>
+                <Button x:Name="TaskStateBtn" DockPanel.Dock="Right" Padding="8,4" Margin="0,0,4,0" Content="状态 ▾" ToolTip="切换状态（进行中 / 延后追催 / 暂缓 / 完成）"/>
+                <Button x:Name="EditTask" DockPanel.Dock="Right" Padding="8,4" Margin="0,0,4,0" Content="编辑"/>
+                <Button x:Name="DoneTask" DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}" Padding="9,4" Margin="0,0,4,0" Content="✓ 完成"/>
+                <Button x:Name="AddTask" DockPanel.Dock="Left" Padding="10,4" Content="＋ 新建任务"/>
+                <TextBlock x:Name="TaskHint" VerticalAlignment="Center" Margin="4,0,0,0" FontSize="11.5"
+                           Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis"/>
+              </DockPanel>
+            </Border>
+            <TreeView x:Name="Tasks"/>
+          </DockPanel>
+        </TabItem>
+
+        <!-- ═══ 微信 ═══ -->
+        <TabItem x:Name="WechatTab" Header="微信">
+          <DockPanel Margin="0,8,0,0">
+            <Border DockPanel.Dock="Top" Padding="8" Margin="0,0,0,8" CornerRadius="10"
+                    Background="{DynamicResource CardBrush}" BorderBrush="{DynamicResource BorderBrush}" BorderThickness="1">
+              <StackPanel>
+                <TextBox x:Name="Search" Tag="搜索会话、备注、拼音首字母或分组…" ToolTip="搜索会话、备注、拼音首字母或分组"/>
+                <DockPanel Margin="0,6,0,0">
+                  <Button x:Name="Options" DockPanel.Dock="Right" Margin="4,0,0,0" Padding="9,4" Content="设置 ▾"/>
+                  <Button x:Name="Groups" DockPanel.Dock="Right" Margin="4,0,0,0" Padding="9,4" Content="分组 ▾"/>
+                  <ComboBox x:Name="Default" ToolTip="未单独标注的会话使用的提醒强度"/>
+                </DockPanel>
+                <DockPanel Margin="0,6,0,0">
+                  <Button x:Name="ChatMulti" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="多选" ToolTip="开启复选框多选，或按住 Ctrl/Shift 点击"/>
+                  <Button x:Name="ToggleChatExpand" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="全折" ToolTip="一键折叠/展开所有分组"/>
+                  <Button x:Name="ReturnWechatTop" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Content="⤒ 回顶" ToolTip="将微信会话列表滚回顶部"/>
+                  <WrapPanel>
+                    <Button x:Name="SyncChats" Style="{StaticResource ChipButton}" Content="⟳ 同步群聊" Margin="0,0,4,0" ToolTip="短暂切换到微信翻页收录更多群聊（自动跳过已同步对象）"/>
+                    <Button x:Name="OpenArchive" Style="{StaticResource ChipButton}" Content="归档导出"/>
+                  </WrapPanel>
+                </DockPanel>
+                <WrapPanel x:Name="SearchActions" Margin="0,6,0,0" Visibility="Collapsed">
+                  <Button x:Name="SearchWechat" Style="{StaticResource PrimaryButton}" Padding="10,4" Content="去微信搜索并打开" Margin="0,0,4,0"/>
+                  <Button x:Name="SaveChat" Padding="10,4" Content="收录到分组…"/>
+                </WrapPanel>
+              </StackPanel>
+            </Border>
+            <TreeView x:Name="Chats"/>
+          </DockPanel>
+        </TabItem>
+      </TabControl>
+    </DockPanel>
+  </Grid>
+</Window>

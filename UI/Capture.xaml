@@ -1,0 +1,32 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="NudgeWatch · 快捕" Width="440" Height="84"
+        WindowStyle="None" ResizeMode="NoResize" AllowsTransparency="True" Background="Transparent"
+        Foreground="{DynamicResource InkBrush}"
+        ShowInTaskbar="False" Topmost="True" WindowStartupLocation="CenterScreen">
+  <Border x:Name="Card" Margin="5" CornerRadius="12" Background="{DynamicResource CardBrush}"
+          BorderBrush="{DynamicResource AccentBrush}" BorderThickness="1.5" Padding="9,6,9,5">
+    <Border.Effect>
+      <DropShadowEffect Color="#000000" BlurRadius="10" ShadowDepth="2" Opacity="0.22"/>
+    </Border.Effect>
+    <Grid>
+      <Grid.RowDefinitions>
+        <RowDefinition Height="32"/>
+        <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
+      <DockPanel>
+        <Button DockPanel.Dock="Right" x:Name="Save" Style="{StaticResource PrimaryButton}"
+                Content="创建 ↵" Padding="11,0" Margin="7,0,0,0" ToolTip="回车创建，Esc 关闭"/>
+        <TextBox x:Name="Input" FontSize="13" Padding="8,0"
+                 Tag="15:00 评审 #避免1h @强　·　#任务 核对流水"
+                 ToolTip="时间 + 标题，可加 #避免1h（会议免打扰）、@强（重要）、@每周、#任务"/>
+      </DockPanel>
+      <DockPanel Grid.Row="1" Margin="0,5,0,0">
+        <Button x:Name="Later" DockPanel.Dock="Left" Style="{StaticResource ChipButton}" Padding="8,1" Content="+10m"/>
+        <Button x:Name="Hour" DockPanel.Dock="Left" Style="{StaticResource ChipButton}" Padding="8,1" Margin="4,0,0,0" Content="#避免1h"/>
+        <TextBlock x:Name="Hint" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="11.5"
+                   Foreground="{DynamicResource MutedBrush}" Text="例：15:00 评审 / #任务 核对流水" TextTrimming="CharacterEllipsis"/>
+      </DockPanel>
+    </Grid>
+  </Border>
+</Window>
